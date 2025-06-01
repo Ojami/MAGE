@@ -71,8 +71,8 @@ arguments
     opts.report_only (1,1) logical = false % generate only the report and skip all other steps
     opts.report_name {mustBeTextScalar} = "report"
     opts.report_intro {mustBeText}
-    opts.gtf37 {mustBeFile} = fullfile(fileparts(which("ribocure.m")), "GTF", "Homo_sapiens.GRCh37.87.gtf.gene.mat")
-    opts.gtf38 {mustBeFile} = fullfile(fileparts(which("ribocure.m")), "GTF", "Homo_sapiens.GRCh38.107.gtf.gene.mat")
+    opts.gtf37 {mustBeFile} = fullfile(fileparts(which("gwasCaller.m")), "GTF", "Homo_sapiens.GRCh37.87.gtf.gene.mat")
+    opts.gtf38 {mustBeFile} = fullfile(fileparts(which("gwasCaller.m")), "GTF", "Homo_sapiens.GRCh38.107.gtf.gene.mat")
     opts.dir = pwd % creates a folder if it doesn't exist
     opts.infoscore (1,1) double = 0.7
 
@@ -150,7 +150,7 @@ if isfield(opts, 'genes')
     pheno = opts.pheno_genes;
 
     if numel(pheno) ~= numel(genes)
-        error("get_ribocure:wrongInputs", "pheno and genes must have the same lenght!")
+        error("wrongInputs", "pheno and genes must have the same lenght!")
     end
 else
     return % nothing left to do!
