@@ -136,6 +136,9 @@ end
 
 if opts.parseMsg
     msg = string(msg).strip.splitlines;
+    if msg(end).startsWith("[")
+        msg(end) = [];
+    end
 end
 
 end 

@@ -96,7 +96,7 @@ function UKB_STRUCT_ALL = phenoParser(opts)
 
 
 arguments
-    opts.method {mustBeTextScalar, mustBeMember(opts.method, ["merge", "file", "manual"])} = "manual" % method merge and file are deprecated.
+    opts.method {mustBeTextScalar, mustBeMember(opts.method, ["merge", "file", "manual"])} = "manual"
     opts.file {mustBeTextScalar, mustBeFile} % should be set if method is "file"
     opts.phenodir {mustBeFolder} = fullfile(fileparts(which('phenoParser.m')), 'UKB_PHENO')
     opts.basketdir {mustBeFolder} = fileparts(which('phenoParser.m')) % basket folders have prefix 'UKBFileParser_'
@@ -1430,7 +1430,15 @@ basket.dfcoverage = zeros(height(basket), 1);
 
 
 for i = 1:height(basket)
-    index = load(fullfile(basket.folder{i}, 'variableMapper.mat'));
+    vmapper_file = fullfile(basket.folder{i}, 'variableMapper.mat');
+    if ~isfile(vmapper_file)
+        basket.empty(i, 1) = true;
+        continue
+    else
+        basket.empty(i, 1) = false;
+    end
+
+    index = load(vmapper_file);
 
     %@21SEP2024
     if numel(index.datev) > 1 % UKB-RAP
@@ -1443,6 +1451,12 @@ for i = 1:height(basket)
         basket.idx{i, 1} = intersect(df.df, index);
         basket.dfcoverage(i) = numel(basket.idx{i, 1})/numel(unique(df.df)); % ratio of df(s) found in this basket
     end
+end
+
+basket(basket.empty, :) = [];
+if isempty(basket)
+    disp("all baskets are empty!")
+    return
 end
 
 if ~opts.ukbrap

@@ -130,7 +130,7 @@ if any(hesin_death_idx)
     end
 
     if opts.gethesin 
-        opts.hesin = ["death", "death_cause", "hesin", "hesin_diag"];
+        opts.hesin = ["death" , "death_cause", "hesin", "hesin_diag"];
     end
 
 end
@@ -352,10 +352,20 @@ if isfield(opts, "jobid") && ~isempty(opts.jobid)
 
         opts.jobstat = cell(numel(opts.jobid), 1);
         for k = 1:numel(opts.jobid)
-            [~, msg] = runbash("dx describe " + opts.jobid(k));
-            msg(~msg.startsWith(["ID", "State", "Tags"])) = [];
+            [~, msg] = runbash("dx describe " + opts.jobid(k) + " --color off");
+            msg(~msg.startsWith(["ID", "State", "Tags", "Output"])) = [];
+            msg(msg.startsWith("Output folder")) = [];
+
+            % extract file id
+            fidx = msg.startsWith("Output");
+            file_id = msg(fidx).extractBetween("[", "]").strip;
+            if isempty(file_id)
+                file_id = "-";
+            end
+            msg(fidx, :) = [];
             msg = msg.split';
             opts.jobstat{k} = array2table(msg(2, :), VariableNames=msg(1, :));
+            opts.jobstat{k}.Output = file_id;
         end
 
         chekstats = vertcat(opts.jobstat{:});
@@ -366,13 +376,13 @@ if isfield(opts, "jobid") && ~isempty(opts.jobid)
             opts.job_tags.done(:) = false;
         end
 
-        done_jobs = chekstats.State == "done";
+        done_jobs = chekstats.State.contains("done");
         if any(done_jobs)
             total_done_jobs = total_done_jobs + sum(done_jobs);
             fprintf("\t%d jobs are done so far.\n", total_done_jobs)
         end
 
-        failed_jobs = chekstats.State == "failed";
+        failed_jobs = chekstats.State.contains("failed");
         if any(failed_jobs)
             total_failed_jobs = total_failed_jobs + sum(failed_jobs);
             fprintf("\t%d jobs are failed so far.\n", total_failed_jobs)
@@ -401,18 +411,37 @@ if isfield(opts, "jobid") && ~isempty(opts.jobid)
     % download and remove files from platform
     done_jobs = opts.job_tags(opts.job_tags.done, :);
     if ~isempty(done_jobs)
+        
+        % get file-ids
+        jobs_tab = cell(height(done_jobs), 1);
+        for k = 1:height(done_jobs)
+            [~, msg] = runbash("dx describe " + done_jobs.ID(k) + " --color off");
+            msg(~msg.startsWith(["ID", "State", "Tags", "Output"])) = [];
+            msg(msg.startsWith("Output folder")) = [];
+
+            % extract file id
+            fidx = msg.startsWith("Output");
+            file_id = msg(fidx).extractBetween("[", "]").strip;
+            if isempty(file_id)
+                file_id = "-";
+            end
+            msg(fidx, :) = [];
+            msg = msg.split';
+            jobs_tab{k} = array2table(msg(2, :), VariableNames=msg(1, :));
+            jobs_tab{k}.Output = file_id;
+        end
+
+        jobs_tab = vertcat(jobs_tab{:});
 
         tt = tic;
         fprintf("downloading data from DNANexus...")
 
         for k = 1:height(done_jobs)
-            cmd = "dx download " + opts.destination + "/" + ...
-                done_jobs.Tags(k) + ".csv" + ...
+            cmd = "dx download " + jobs_tab.Output(k) + ...
                 " --output " + makeWSLpath(opts.dir) + " --overwrite";
             runbash(cmd, verbose=true);
 
-            cmd = "dx rm " + opts.destination + "/" + ...
-                done_jobs.Tags(k) + ".csv";
+            cmd = "dx rm " + jobs_tab.Output(k);
             runbash(cmd, verbose=true);
         end
 
