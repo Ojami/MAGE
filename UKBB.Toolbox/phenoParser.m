@@ -1448,6 +1448,14 @@ for i = 1:height(basket)
         basket.date(i, 1) = index.datev;
         index = string(index.variableMapper(:, 2));
         index = unique(extractBetween(index, "x", "_"));
+
+        if endsWith(basket.name(i), "HESIN_DEATH") % add hesin/death fields by default
+            % find hesin/death
+            idx_hesin = df.entity.lower.contains("hesin");
+            idx_death = df.entity.lower.contains("death");
+            df.df(idx_death) = "40001";
+            df.df(idx_hesin) = "41270";
+        end
         basket.idx{i, 1} = intersect(df.df, index);
         basket.dfcoverage(i) = numel(basket.idx{i, 1})/numel(unique(df.df)); % ratio of df(s) found in this basket
     end
