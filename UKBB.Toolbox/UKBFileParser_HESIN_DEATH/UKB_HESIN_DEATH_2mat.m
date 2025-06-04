@@ -53,11 +53,13 @@ end
 
 % read date attending the assessment center (for prospective analysis)
 da = table2struct(phenoParser("query", "", "df", "53", "save", false, ...
-    "instance", opts.instance, "surv", false));
+    "instance", opts.instance, "surv", false, "all", true));
 
 % read data of birht based on year and month of birth
-yob = table2struct(phenoParser("query", "", "df", "34", "save", false, "surv", false));
-mob = table2struct(phenoParser("query", "", "df", "52", "save", false, "surv", false));
+yob = table2struct(phenoParser("query", "", "df", "34", "save", false, ...
+    "surv", false, "all", true));
+mob = table2struct(phenoParser("query", "", "df", "52", "save", false, ...
+    "surv", false, "all", true));
 [f1, f2] = ismember(yob.eid, mob.eid); f2(f2<1) = [];
 dob = table(yob.eid(f1), datetime(yob.rawUKB(f1), double(mob.rawUKB(f2)), ones(sum(f1), 1), ...
     Format="dd/MM/uuuu"), VariableNames=["eid", "dob"]);
@@ -80,6 +82,7 @@ tabs = cell(pd.read_html(url));
 
 for k = 1:numel(tabs)
     tab = table(tabs{k});
+    tab = convertvars(tab, 1:width(tab), @string);
     tab.(width(tab)) = erase(tab.(width(tab)), "*");
 
     if tab.(1)(1).lower == "death"

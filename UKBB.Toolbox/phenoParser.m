@@ -138,7 +138,7 @@ arguments
     % opts.landmark (1,1) double = 0.5 % in years to exclude cases who developed the outcome before this value
 
     %@19SEP2024
-    opts.ukbrap (1,1) logical = false
+    opts.ukbrap (1,1) logical = true
     opts.ukbrap_dir {mustBeTextScalar} = "UKBFileParser_RAP" % name of UKB-RAP pheno directory (not path)
     
     %@22APR2025
