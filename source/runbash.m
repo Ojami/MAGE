@@ -1,6 +1,6 @@
 function [fid, msg] = runbash(cmd, bashname, opts)
 % writes a input string vector, cmd, to a bash script, bashname, and runs
-% it via wsl for Windows OS, otherwise simply runs the bash script.
+% it via wsl.
 
 % Oveis Jamialahmadi, University of Gothenburg, March 2022.
 % 
@@ -86,6 +86,13 @@ if ispc && opts.mountNetwork
     end
 end
 
+% Ensure script is executable
+% This solves “Permission denied” issues on Linux or cloud workstations
+[~, chmodMsg] = system(cmdpref + 'chmod +x "' + opts.dirwsl + bashname + '"');
+if opts.verbose
+    disp("chmod output: " + chmodMsg);
+end
+
 if opts.conda
     [fid, msg] = system(cmdpref + '/bin/bash -i "' + opts.dirwsl + bashname + '"');
     if fid
@@ -110,12 +117,13 @@ else
 end
 
 if opts.verbose, disp(msg); end
+% system("wsl systemd-run --scope -p MemoryLimit=1000M " + opts.dirwsl + bashname);
 
 if opts.waitprocess ~= "" % wait for the commands to be done
     pause(5)
-    [~, isRunning] = system(cmdpref + "pgrep " + opts.wait + " && wsl echo Running");
+    [~, isRunning] = system(cmdpref + "pgrep " + opts.wait + " && " + cmdpref + "echo Running");
     while ~isempty(isRunning)
-        [~, isRunning] = system(cmdpref + "pgrep -x " + opts.wait + " && wsl echo Running");
+        [~, isRunning] = system(cmdpref + "pgrep -x " + opts.wait + " && " + cmdpref + "echo Running");
     end
 end
 
