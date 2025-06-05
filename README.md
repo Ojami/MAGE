@@ -62,7 +62,7 @@ If you intend to run analyses on UK Biobank data, follow the instructions on [DN
   ```bash
   export DX_TOKEN_FILE="$HOME/.dnanexus_config/environment.json"
   chmod 644 "$DX_TOKEN_FILE"
-````
+  ```
 
 * **Export the project ID for Docker**
 
