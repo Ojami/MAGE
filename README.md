@@ -58,7 +58,7 @@ By packaging all these capabilities into one toolbox, MAGE enables you to write 
 
 If you intend to run analyses on UK Biobank data, follow the instructions on [DNAnexus](https://community.ukbiobank.ac.uk/hc/en-gb/articles/24999460813597-Working-with-MATLAB) for setting up MATLAB on the UK Biobank Research Analysis Platform (UKB-RAP). For more details, follow the steps below within the `ttyd` instance:
 
-- **Prepare the auth‐token JSON file for the `dx` toolkit**  
+* **Prepare the auth‐token JSON file for the `dx` toolkit**  
   ```bash
   export DX_TOKEN_FILE="$HOME/.dnanexus_config/environment.json"
   chmod 644 "$DX_TOKEN_FILE"
