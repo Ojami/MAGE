@@ -1,4 +1,4 @@
-# <img src="docs/image/logo.png" alt="MAGE Logo" width="80" /> MAGE (MAtlab GEnetics) Toolbox
+# <img src="docs/image/logo.png" alt="MAGE Logo" width="100" /> MAGE (MAtlab GEnetics) Toolbox
 
 
 **MAGE** is a comprehensive MATLAB toolbox designed to streamline genetic data analysis workflows. It provides user‐friendly wrappers around popular genetics software, seamless integration with R and Python tools, and built-in functions for data handling, analysis, and visualization—enabling you to run end-to-end pipelines entirely from within MATLAB.
