@@ -39,7 +39,7 @@ arguments
     opts.chr
     opts.dosage (1,1) logical = true % dosage or hard genotype calls
     opts.model {mustBeMember(opts.model, ["add", "dom", "rec"])} = "add"
-    opts.genohome {mustBeFolder} = "D:\Imputed" % must only contains unique BGEN files for each chr
+    opts.genohome {mustBeFolder} % must only contains unique BGEN files for each chr
 end
 
 % get QCed samples --------------------------------------------------------
