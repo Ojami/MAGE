@@ -1,12 +1,11 @@
 function UKB_STRUCT_ALL = getUKB_alcohol(inst)
 
 if nargin < 1
-    inst = 2; % MRI
+    inst = 0; % baseline
 end
 
 % Jan. 2020
 %% Notes-------------------------------------------------------------------
-% Based on Federica's suggestions:
 %           Alcohol             Unit   g
 % Red/white wine or champagne   1.5    12
 % Beer/cider                    2      16
