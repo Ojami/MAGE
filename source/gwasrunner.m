@@ -325,6 +325,7 @@ arguments
     opts.mask_def {mustBeFile} % File with mask definitions using the annotations defined in --anno-file
     opts.rare_mac (1,1) double = 1000 % minor allele count (MAC) threshold below which to use HLM method for QTs [default is 1000]
     opts.force_robust (1,1) logical = false % use robust SE instead of HLM for rare variant GxE test with quantitative traits
+    opts.write_mask (1,1) logical = false % write mask to PLINK bed format (does not work when building masks with 'sum')
 
     % survival analysis
     opts.checkDiagnostics (1,1) logical = false
@@ -2635,6 +2636,7 @@ ropts.out = filenames.patt;
 ropts.verbose = false;
 ropts.rare_mac = opts.rare_mac; % @12MARCH2023: for interaction (< this, HLM is used, above this, robust SE)
 ropts.force_robust = opts.force_robust; % @12MARCH2023: for interaction (if ture, only robust SE is used)
+ropts.write_mask = opts.write_mask;
 if ~isnan(opts.workers), ropts.threads = opts.workers; end
 
 if opts.interaction ~= ""

@@ -89,6 +89,7 @@ arguments
     opts.phenoFile {mustBeVector} % the same size as covarFile and pred
     opts.covarFile {mustBeVector} % the same size as phenoFile and pred
     opts.condition {mustBeTextScalar}
+    opts.write_mask (1,1) logical = false % write mask to PLINK bed format (does not work when building masks with 'sum')
 
     %@30SEP2024
     opts.interaction {mustBeTextScalar} = "" % adds SNP*trait interaction to the regression model. It's the name of MAT file and not the tag string.
@@ -125,7 +126,7 @@ if ~isfolder(opts.dir), mkdir(opts.dir); end
 opts.dir = opts.dir.Name;
 
 fixedFields = ["aaf_bins", "fitter", "build_mask", "skat_params", ...
-    "vc_maxAAF", "pred", "qc", "qcinc", "covar", "condition"];
+    "vc_maxAAF", "pred", "qc", "qcinc", "covar", "condition", "write_mask"];
 
 % check PheWide
 if isfield(opts, 'snps')
@@ -150,7 +151,7 @@ if isfield(opts, 'genes')
     pheno = opts.pheno_genes;
 
     if numel(pheno) ~= numel(genes)
-        error("wrongInputs", "pheno and genes must have the same lenght!")
+        error("gwasCaller:wrongInputs", "pheno and genes must have the same lenght!")
     end
 else
     return % nothing left to do!
@@ -557,6 +558,7 @@ arguments
     opts.catCovar {mustBeText, mustBeVector} % list of categorical covariates
     opts.catCovarCell {mustBeText, mustBeVector}
     opts.debug (1,1) logical = false
+    opts.write_mask (1,1) logical = false % write mask to PLINK bed format (does not work when building masks with 'sum')
 end
 
 gene.gene = string(gene.gene);
