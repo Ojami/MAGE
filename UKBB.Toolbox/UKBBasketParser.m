@@ -31,6 +31,7 @@ arguments
 
     % is the input file an entity file? e.g. hesin_oper
     opts.entity (1,1) logical = false 
+    opts.parquet (1,1) logical = false % only if entity is true
 end
 
 if opts.parallel && isempty(gcp('nocreate'))
@@ -176,9 +177,14 @@ if opts.entity
     if opts.parallel
         rawfile = gather(rawfile);
     end
-
-    rawfile = table2struct(rawfile, 'ToScalar', true);
-    save(fullfile(opts.path, "UKB_" + inputUKBname + ".mat"), '-struct', 'rawfile')
+    
+    if opts.parquet
+        parquetwrite(fullfile(opts.path, "UKB_" + inputUKBname + ".parquet"),...
+            rawfile, VariableCompression="gzip")
+    else
+        rawfile = table2struct(rawfile, 'ToScalar', true);
+        save(fullfile(opts.path, "UKB_" + inputUKBname + ".mat"), '-struct', 'rawfile')
+    end
 
 else
 

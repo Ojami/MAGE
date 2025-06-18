@@ -12,14 +12,12 @@ arguments
     opts.instance_type {mustBeTextScalar} = "mem2_ssd1_v2_x16" % for table-exporter. see dx run --instance-type-help
     opts.list_instance_type (1,1) logical = false % if true only lists the available instances on UKB-RAP
     opts.dir {mustBeTextScalar} = fullfile(fileparts(which("phenoParser.m")), "UKBFileParser_RAP") % output dir, if does not exist, will create one.
-    opts.updatefreq (1,1) double = 30 % update frequency for HESIN and DEATH tables
+    opts.updatefreq (1,1) double = 90 % update frequency for HESIN and DEATH tables
     opts.fetchOnly (1,1) logical = false % if true, only fetches 'df' without parsing (csv files will be written to opts.dir)
 
     % for UKB_HESIN_DEATH_2mat/UKBBasketParser
     opts.workers (1,1) double = 35 % number of workers.
 end
-
-% df = load("tdic.mat").tdic;
 
 % Help for instant types
 if opts.list_instance_type
@@ -65,15 +63,37 @@ if isfile(vmap_file) % otherwise it's the first try to fetch data
     % outdated fields
     vtab.update = days(datetime("today") - vtab.date) > opts.updatefreq;
 
-    % remove intersection of vtab updated fields and df fields
-    df(ismember(df.name, vtab.name(~vtab.update)), :) = [];
+    % remove intersection of vtab updated fields and df fields, while
+    % making sure they belong to the same entity: vtab name column: if
+    % numeric --> participant, else --> name of entity. This is important
+    % for entities such as olink where names overlap but they belong to
+    % different entities (e.g. instances)
+    vtab.ent = ismissing(double(vtab.chunk));
+    vtab_ok = vtab(~vtab.update, :);
+    
+    if any(vtab_ok.ent) % are entities present (except participant)?
+        ent_idx = ismember(df.entity, vtab_ok.chunk(vtab_ok.ent));
+    else
+        ent_idx = true(height(df), 1);
+    end
+
+    df(ismember(df.name, vtab_ok.name) & ent_idx, :) = [];
 
     if isempty(df) % everything is upToDate
         return
     end
 
-    % keep outdated variables and update if they're in df
-    vtab(~vtab.update & ~ismember(vtab.name, df.name), :) = [];
+    % keep outdated variables and update if they're in df -----------------
+
+    if any(vtab.ent) % are entities present (except participant)?
+        ent_idx = ~ismember(vtab.chunk, df.entity);
+    else
+        ent_idx = false(height(vtab), 1);
+    end
+
+    vtab(~vtab.update & (~ismember(vtab.name, df.name) | ent_idx), :) = [];
+    % ---------------------------------------------------------------------
+
     if ~isempty(vtab)
         % delete outdated fields from variableMapper. Note that, it's more
         % efficient to work with matfile, so here by 'delete' we mean
@@ -86,13 +106,19 @@ if isfile(vmap_file) % otherwise it's the first try to fetch data
         for k = 1:numel(uchunk)
             idx = vtab.chunk == uchunk(k);
             vtmp = vtab(idx, :);
+            
+            chunk_name = fullfile(opts.dir, "UKB_" + uchunk(k));
 
-            chunk_file = matfile(fullfile(opts.dir, "UKB_" + uchunk(k) + ".mat"), ...
-                Writable=true);
-            for j = 1:height(vtmp)
-                chunk_file.(vtmp.name(j)) = [];
+            if isfile(chunk_name + ".mat")
+                chunk_file = matfile(chunk_name + ".mat", ...
+                    Writable=true);
+                for j = 1:height(vtmp)
+                    chunk_file.(vtmp.name(j)) = [];
+                end
+                clear("chunk_file")
+            else
+                delete(chunk_name + ".parquet") % olink
             end
-            clear("chunk_file")
 
         end
 
@@ -177,9 +203,9 @@ for k = 1:numel(uentity)
 
     ds.id = ds.entity + "." + ds.name;
     
-    % try extract_dataset (locally) if entity is participant or olink and
+    % try extract_dataset (locally) if entity is participant and
     % has either instances or arrays
-    if uentity(k).startsWith(["olink_", "participant"])
+    if uentity(k).startsWith("participant")
         
         % exclude those fields without arrays and instances (e.g.
         % hospitalized data with complex structure)
@@ -308,11 +334,17 @@ if isfield(jobs, "tab")
                 % end
 
             else % other entities such as omop, gp, ...: fetch whole entity table
+
+                hdr_style = "UKB-FORMAT";
+                if df.entity(1).startsWith("olink")
+                    hdr_style = "FIELD-NAME";
+                end
+
                 cmd = "dx run table-exporter" + ...
                     " -idataset_or_cohort_or_dashboard=" + dataset_id + ...
                     " -ientity=" + df_in.entity(1) + ...
                     " -ioutput=" + df_in.entity(1) + ...
-                    " -ioutput_format=CSV -iheader_style=UKB-FORMAT" + ...
+                    " -ioutput_format=CSV -iheader_style=" + hdr_style + ...
                     " -icoding_option=RAW" + ...
                     " --destination " + opts.destination + ...
                     " --instance-type " + opts.instance_type + ...
@@ -498,10 +530,20 @@ if ~isempty(csv_entity)
     tt = tic;
     fprintf("Parsing %d entity datasets...", numel(csv_entity))
 
+    % olink data is big: we chunk --> save
+    isOlink = csv_entity.startsWith("olink");
+
     csv_entity = fullfile(opts.dir, csv_entity);
     for k = 1:numel(csv_entity)
+
+        if isOlink(k)
+            useParquet = true;
+        else
+            useParquet = false;
+        end
+
         UKBBasketParser(csv_entity(k), ukbrap=true, threads=opts.workers, ...
-            path=opts.dir, verbose=false, entity=true)
+            path=opts.dir, verbose=false, entity=true, parquet=useParquet)
         delete(csv_entity(k))
     end
 

@@ -912,6 +912,12 @@ for i = 1:numel(query)
         tdic(~ismember(tdic.FieldID, split(opts.df(i), ';')), :) = [];
     end
 
+    % check instance for ukb_rap: this is for entities such as olink where
+    % each instance is in a different database
+    if opts.ukbrap && ~isempty(opts.instance)
+        tdic(~ismember(tdic.instance, double(opts.instance)), :) = [];
+    end
+
     if isempty(tdic) % codings don't correspond to any df
         fprintf('input codings do not correspond to any data-fields!\n')
         continue
@@ -920,7 +926,13 @@ for i = 1:numel(query)
     % check tdic
     if height(tdic) > 1 && ~opts.all
         tdic = sortrows(tdic, 'Coding');
-        showtdic = tdic(:, ["Field", "FieldID", "Coding"]);
+        viz_cols = ["Field", "FieldID", "Coding"];
+        if any(colnames(tdic) == "entity")
+            % e.g. for olink data, the instance is in the entity, and
+            % cannot be inferred from other cols
+            viz_cols = union("entity", viz_cols, "stable");
+        end
+        showtdic = tdic(:, viz_cols);
         showtdic.index = (1:height(showtdic))';
         showtdic = movevars(showtdic, 'index', 'Before', 1);
         disp(showtdic)
@@ -1021,7 +1033,18 @@ for i = 1:numel(query)
 
     opts.ct = i;
 
-    basket = loadDFfromUKBBasket(tdic, opts);
+    [basket, tdic_out] = loadDFfromUKBBasket(tdic, opts);
+    
+    % duplicated names are problematic when basket contains, e.g. the same
+    % protein from different entities (like olink of 2 instances). "name2"
+    % is unique name which should be used for later post-processing of
+    % phenotypes.
+    if any(colnames(tdic_out) == "name2") && all(tdic_out.name2 ~= "")
+        tdic_out.id = tdic_out.entity + ":" + tdic_out.name;
+        tdic.id = tdic.entity + ":" + tdic.name;
+        [~, idx_match] = ismember(tdic.id, tdic_out.id);
+        tdic.name = tdic_out.name2(idx_match);
+    end
 
     if isempty(basket)
         error('phenoParser:noEID', 'query has no observations!')
@@ -1513,6 +1536,18 @@ if opts.surv
     df.Properties.UserData = basket;
 end
 
+% check if there are duplicated name in df: e.g. same protein but
+% from different olink entities --> create a unique name 
+if opts.ukbrap && ~isempty(duplicates(df.name))
+    if all(~ismissing(df.instance))
+        df.name2 = df.name + "_i" + df.instance;
+    else
+        df.name2 = df.name + "_" + df.entity;
+    end
+else
+    df.name2(:) = "";
+end
+
 % load df(s) per basket
 basket.chunk = cell(height(basket), 1);
 for i = 1:height(basket) % loop over each basket
@@ -1624,6 +1659,13 @@ for i = 1:height(basket) % loop over each basket
     else
         index(:, 3) = extractBetween(index(:, 2), "x", "_");
     end
+    
+    % first match to entities (name can be misleading for entities
+    % due to duplicates). first column of index is entity name (if present)
+    entity_match_idx = ismember(index(:, 1), df_in.entity);
+    if any(entity_match_idx)
+        index(~entity_match_idx, :) = [];
+    end
 
     index(~ismember(index(:, 3), basket.idx{i}), :) = [];
     chunkidx = unique(index(:, 1));
@@ -1639,8 +1681,22 @@ for i = 1:height(basket) % loop over each basket
         [inst_idx, arr_idx] = deal(true(numel(chunkvars), 1));
         if opts.ukbrap
             %@21SEP2024: array/instance is different for UKB-RAP dfs
-            [~, ia_idx] = ismember(chunkvars, df_in.name); ia_idx(ia_idx < 1) =[];
-            df_in_chunk = df_in(ia_idx, :);
+
+            % first match to entities (name can be misleading for entities
+            % due to duplicates). first column of index (i.e. chunkidx) is
+            % entity name (if present)
+            
+            entity_match_idx = df_in.entity == chunkidx(k1);
+            if any(entity_match_idx)
+                df_in_chunk = df_in(entity_match_idx, :);
+                
+                % reorder (optional)
+                [~, ia_idx] = ismember(chunkvars, df_in_chunk.name); ia_idx(ia_idx < 1) =[];
+                df_in_chunk = df_in_chunk(ia_idx, :);
+            else
+                [~, ia_idx] = ismember(chunkvars, df_in.name); ia_idx(ia_idx < 1) =[];
+                df_in_chunk = df_in(ia_idx, :);
+            end
             
             if ~isempty(opts.instance) && ~opts.surv
                 inst_idx = ismember(df_in_chunk.instance, opts.instance);
@@ -1677,9 +1733,16 @@ for i = 1:height(basket) % loop over each basket
         if opts.ukbrap
             chunkvars = union(chunkvars, "eid"); % eid per each chunk
         end
-
-        basket.chunk{i}{k1} = load(fullfile(basket.folder{i}, ...
-            "UKB_" + chunkidx(k1) + ".mat"), chunkvars{:});
+        
+        chunk_file = fullfile(basket.folder{i}, "UKB_" + chunkidx(k1));
+        
+        if isfile(chunk_file + ".mat")
+            basket.chunk{i}{k1} = load(chunk_file, chunkvars{:});
+        else % parquet
+            basket.chunk{i}{k1} = parquetread(chunk_file + ".parquet", ...
+                SelectedVariableNames=string(chunkvars));
+            basket.chunk{i}{k1} = table2struct(basket.chunk{i}{k1}, ToScalar=true);
+        end
         
         if opts.ukbrap
             chunk_eid = basket.chunk{i}{k1}.eid;
@@ -1698,6 +1761,23 @@ for i = 1:height(basket) % loop over each basket
             clear chunk_eid
         else
             basket.chunk{i}{k1} = struct2table(basket.chunk{i}{k1}, 'AsArray', true);
+        end
+
+        % resolve the duplicated names (chunk arrays will be merged in the
+        % end, so to avoid that, we should rename duplicated fieldnames to
+        % unique ones)
+        if all(df_in_chunk.name2 ~= "")
+            old_fis = string(fieldnames(basket.chunk{i}{k1}));
+            [idx1, idx2] = ismember(old_fis, df_in_chunk.name);
+            old_fis(~idx1) = [];
+            df_in_chunk = df_in_chunk(idx2(idx1), :);
+
+            for j = 1:numel(old_fis)
+                tmp_old_fi = basket.chunk{i}{k1}.(old_fis(j));
+                basket.chunk{i}{k1} = rmfield(basket.chunk{i}{k1}, old_fis(j));
+                basket.chunk{i}{k1}.(df_in_chunk.name2(j)) = tmp_old_fi;
+                clear tmp_old_fi
+            end
         end
 
     end
@@ -1727,7 +1807,11 @@ for i = 1:height(basket) % loop over each basket
         finames = fieldnames(basket.chunk{i});
 
         if opts.ukbrap
-            [~, vtidx] = ismember(finames, df.name); vtidx(vtidx < 1) = [];
+            if all(df.name2 ~= "")
+                [~, vtidx] = ismember(finames, df.name2); vtidx(vtidx < 1) = [];
+            else
+                [~, vtidx] = ismember(finames, df.name); vtidx(vtidx < 1) = [];
+            end
         else
             fidfs = string(extractBetween(finames, "x", "_"));
             [~, vtidx] = ismember(fidfs, df.df); vtidx(vtidx < 1) = [];
