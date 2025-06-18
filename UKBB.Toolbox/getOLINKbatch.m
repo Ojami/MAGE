@@ -1,21 +1,32 @@
-function getOLINKbatch(plateFile, opts)
-%@29JULY2024: use UKB-RAP to get plate IDs (df 30901) using table exporter.
+function getOLINKbatch(opts)
+%@29JULY2024: 
 % This function generates OLINK batch variables for adjustments in pQTL
 % analyses (see https://www.nature.com/articles/s41586-023-06592-6).
 
 arguments
-    plateFile {mustBeFile} % from UKB-RAP
     opts.path {mustBeFolder} = fullfile(fileparts(which("getOLINKbatch.m")), "UKB_PHENO")
 end
 
-df = readtable(plateFile, FileType="text", TextType="string", ...
-    VariableNamingRule="preserve");
-df = df(:, ["eid", "30901-0.0"]);
-df = renamevars(df, "30901-0.0", "plate");
+% read Olink plate IDs
+tmp = phenoParser(query="", ...
+    df="30901", ...
+    instance=0, ...
+    save=false, surv=false);
+df = struct(eid=tmp.eid{1}, plate=tmp.rawUKB{1});
+clear tmp
+df = struct2table(df);
 
 % plate ID to batch mapper
-pb = readtable("https://biobank.ctsu.ox.ac.uk/crystal/ukb/auxdata/olink_batch_number.dat", ...
-    FileType="text", TextType="string", VariableNamingRule="preserve");
+url = "https://biobank.ctsu.ox.ac.uk/crystal/ukb/auxdata/olink_batch_number.dat";
+topts = detectImportOptions(url, ...
+            FileType="text", ...
+            VariableNamingRule="preserve");
+topts = setvartype(topts, topts.VariableNames, "string");
+pb = readtable(url, topts); 
+
+if all(~pb.PlateID.startsWith("0"))
+    pb.PlateID = "0" + pb.PlateID;
+end
 
 % sanity check
 assert(all(ismember(df.plate, pb.PlateID)), "Some unkonw plates found in the data from UKB-RAP, check your data!")
@@ -24,6 +35,7 @@ assert(all(ismember(df.plate, pb.PlateID)), "Some unkonw plates found in the dat
 df.batch = pb.Batch(idx);
 
 % write it to a struct pheno
+df.batch = double(df.batch);
 UKB_STRUCT_ALL = struct("eid", df.eid, "rawUKB", df.batch, ...
     "numericFlag", true, "termMeaning", '', "tag", "OLINK_BATCH");
 
