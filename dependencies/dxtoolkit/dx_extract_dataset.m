@@ -73,11 +73,10 @@ if isfile(vmap_file) % otherwise it's the first try to fetch data
     
     if any(vtab_ok.ent) % are entities present (except participant)?
         ent_idx = ismember(df.entity, vtab_ok.chunk(vtab_ok.ent));
-    else
-        ent_idx = true(height(df), 1);
+        df(ent_idx, :) = [];
     end
 
-    df(ismember(df.name, vtab_ok.name) & ent_idx, :) = [];
+    df(ismember(df.name, vtab_ok.name), :) = [];
 
     if isempty(df) % everything is upToDate
         return
