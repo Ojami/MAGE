@@ -31,7 +31,7 @@ By packaging all these capabilities into one toolbox, MAGE enables you to write 
 1. **Clone the repository:**
 
    ```bash
-   git clone https://github.com/yourusername/MAGE.git
+   git clone https://github.com/Ojami/MAGE.git
    cd MAGE
    ```
 
