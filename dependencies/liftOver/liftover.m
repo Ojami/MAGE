@@ -17,6 +17,7 @@ arguments
     opts.useEnsemble (1,1) logical = true % to use ENSEMBL REST API for variants liftOver fails to map
     opts.backup (1,1) logical = false % save liftovers locally for future use 
     opts.method {mustBeTextScalar, mustBeMember(opts.method, ["ensembl", "ucsc", "both"])} % overrides 'chain'
+    opts.conflict {mustBeTextScalar, mustBeMember(opts.conflict, ["ensembl", "ucsc"])} = "ensembl" % in case of conflic, which pos should be picked?
 end
 
 if opts.backup % under development
@@ -122,10 +123,18 @@ if numel(opts.chain) > 1
 
     inc_idx = (map.en ~= map.uc) & (~nan_idx);
     fprintf("\t%d inconsistent liftovers between Ensembl and UCSC\n", sum(inc_idx))
-    fprintf("\t\tkept Ensembl locations for inconsistent maps\n")
+
+    conf_txt = ifelse(ismember(opts.conflict, "ensembl"), "Ensembl", "UCSC");
+    fprintf("\t\tkept %s locations for inconsistent maps\n", conf_txt)
     assert(all(ismissing(map.start(inc_idx))))
-    map.start(inc_idx) = map.en(inc_idx);
-    map.method(inc_idx) = "Ensembl(conflict)";
+
+    if ismember(opts.conflict, "ensembl")
+        map.start(inc_idx) = map.en(inc_idx);
+    else
+        map.start(inc_idx) = map.uc(inc_idx);
+    end
+
+    map.method(inc_idx) = conf_txt + "(conflict)";
 
 
     % fill the rest with whatever exclusively found by UCSC or Ensembl

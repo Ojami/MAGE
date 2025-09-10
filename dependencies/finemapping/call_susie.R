@@ -1,0 +1,263 @@
+#' call_susie: Minimal FinnGen-style SuSiE-RSS runner (raw-binary LD by prefix)
+#'
+#' Reads GWAS summary stats (CSV/TSV), loads an in-sample LD correlation matrix
+#' from raw binary + shape files using a single prefix, and runs SuSiE-RSS.
+#' Extracts 95% credible sets, computes post-hoc purity (min/mean r^2), and
+#' writes ONE tab-delimited file = input sumstats with appended SuSiE columns.
+#'
+#' FinnGen reference:
+#' https://github.com/FINNGEN/finemapping-pipeline/blob/master/R/run_susieR.R
+#'
+#' REQUIRED sumstats columns: CHR, POS, A1 (effect allele), A2, BETA, SE, N
+#' Row order must match LD variant order.
+#' Assumes already harmonized; you may diagnose via estimate_s_rss/andkriging_rss
+#'
+#' Output file name: file.path(out_dir, paste0(basename(ld_file_pref), ".susie.txt"))
+#'
+#' @param sumstats_file Character; path to summary statistics (CSV/TSV).
+#' @param ld_file_pref  Character; LD prefix. Reads paste0(prefix,".bin") and
+#'                      paste0(prefix,".shape"); little-endian doubles + "m n".
+#' @param out_dir       Character; directory to write results (default: getwd()).
+#' @param L Integer; max single-effects (default 10).
+#' @param min_cs_corr  Numeric [0,1]; |r| purity threshold at extraction (default 0.5).
+#'                      Set 0 to mimic FinnGen’s post-hoc-only purity.
+#' @param good_cred_r2 Numeric [0,1]; post-hoc CS purity threshold on r^2 (default 0.25 ≈ |r|≥0.5).
+#' @param estimate_residual_variance Logical; TRUE recommended for in-sample LD.
+#' @param estimate_prior_variance    Logical; let SuSiE estimate prior variance.
+#' @param psd_check Logical; if TRUE, verify R is PSD after symmetrization and
+#'                  repair if not (nearPD first, else eigen-floor). Default FALSE.
+#' @param r_tol Numeric; PSD eigenvalue tolerance for the check. Default 1e-8.
+#' @return (invisible) full path of the written results file
+call_susie <- function(
+    sumstats_file,
+    ld_file_pref,
+    out_dir = getwd(),
+    L = 10,
+    min_cs_corr  = 0.5,   # SuSiE default |r|
+    good_cred_r2 = 0.25,  # post-hoc r^2 (≈ |r| 0.5)
+    estimate_residual_variance = TRUE,
+    estimate_prior_variance    = TRUE,
+    psd_check = FALSE,
+    r_tol = 1e-8
+) {
+  # ---- deps ----
+  if (!requireNamespace("data.table", quietly = TRUE))
+    stop("Package 'data.table' is required.")
+  if (!requireNamespace("susieR", quietly = TRUE))
+    stop("Package 'susieR' is required.")
+  
+  # ---- logging setup (stdout + messages/warnings/errors to <prefix>.log) ----
+  if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+  log_file <- file.path(out_dir, paste0(basename(ld_file_pref), ".log"))
+  log_con  <- file(log_file, open = "wt")
+
+  sink(log_con, append = TRUE, type = "output")
+  sink(log_con, append = TRUE, type = "message")
+
+  on.exit({
+    sink(type = "output")
+    sink(type = "message")
+    close(log_con)
+  }, add = TRUE)
+  cat("=== call_susie started at", format(Sys.time()), "===\n")
+  
+  # set BLAS threads to (cores - 1) if RhpcBLASctl is available
+  if (requireNamespace("RhpcBLASctl", quietly = TRUE)) {
+    cores <- tryCatch(parallel::detectCores(logical = TRUE), error = function(e) 1L)
+    thr   <- max(1L, as.integer(cores) - 1L)
+    cat("Setting BLAS/OMP threads to", thr, "\n")
+    try(RhpcBLASctl::blas_set_num_threads(thr), silent = TRUE)
+    try(RhpcBLASctl::omp_set_num_threads(thr),  silent = TRUE)
+  }
+  
+  # make warnings print immediately
+  old_warn <- getOption("warn")
+  on.exit(options(warn = old_warn), add = TRUE)
+  options(warn = 1)
+
+  # ---- read sumstats ----
+  cat("Reading sumstats:", sumstats_file, "\n")
+  ss <- data.table::fread(sumstats_file, data.table = FALSE)
+  req <- c("CHR", "POS", "A1", "A2", "BETA","SE", "N")
+  miss <- setdiff(req, names(ss))
+  if (length(miss)) stop("Missing required columns: ", paste(miss, collapse = ", "))
+  
+  cols_to_convert <- c("POS", "BETA", "SE", "N")
+  ss[cols_to_convert] <- lapply(ss[cols_to_convert], as.numeric)
+  ss$Z <- ss$BETA / ss$SE
+  
+  # scalar n for susie_rss (use median across variants)
+  n_eff <- stats::median(ss$N[is.finite(ss$N)], na.rm = TRUE)
+  if (!is.finite(n_eff) || n_eff <= 0) stop("Effective sample size (median of 'n') is invalid.")
+  
+  # ---- read LD from prefix.{bin,shape} (little-endian doubles) ----
+  ld_bin   <- paste0(ld_file_pref, ".bin")
+  ld_shape <- paste0(ld_file_pref, ".shape")
+  cat("Reading LD:", ld_bin, ld_shape, "\n")
+  dims <- scan(ld_shape, what = double(), quiet = TRUE)
+  if (length(dims) < 2) stop("Shape file must contain two numbers: m n.")
+  m <- as.integer(dims[1]); n <- as.integer(dims[2])
+  con <- file(ld_bin, "rb"); on.exit(close(con), add = TRUE)
+  R <- readBin(con, what = "double", n = m * n, size = 8, endian = "little")
+  if (length(R) != m * n) stop("Binary size does not match shape m*n.")
+  dim(R) <- c(m, n)
+  
+  if (m != n) stop("LD matrix must be square (got ", m, "x", n, ").")
+  
+  #---- inlucde prior weights --------------------------------------------------
+  prior_weights <- NULL
+  
+  # Check if 'SNPVAR' column exists in ss
+  if ("SNPVAR" %in% colnames(ss)) {
+    cat("Using SNPVAR as prior inclusion weights\n")
+    prior_weights <- ss$SNPVAR
+	prior_weights = prior_weights/sum(prior_weights) # similar to polyfun
+    idx <- as.integer(ss$idx)
+    R <- R[idx, idx, drop = FALSE]
+  }
+  
+  p <- ncol(R)
+  if (nrow(ss) != p)
+    stop("Row count of sumstats (", nrow(ss), ") must equal LD dimension (", p, ").")
+  
+  z <- as.numeric(ss$Z)
+  if (length(z) != p) stop("Length of z does not match LD dimension.")
+  
+  # ---- Symmetrize & fix diag ----
+  cat("Symmetrizing LD and fixing diagonal to 1\n")
+  R <- (R + t(R)) / 2
+  diag(R) <- 1
+  
+  # ---- Optional PSD check & repair ----
+  if (psd_check) {
+    cat("PSD check enabled (r_tol =", r_tol, ")\n")
+    # faithful to SuSiE spirit: eigen tolerance
+    ev <- eigen(R, symmetric = TRUE, only.values = TRUE)$values
+    min_ev <- ev[length(ev)]
+    cat(sprintf("Min eigen before repair: %.3e\n", min_ev))
+    if (min_ev < -r_tol) {
+      warning(sprintf("LD matrix not PSD (min eigen = %.3e < -r_tol). Repairing...", min_ev))
+      # 1) try Higham nearest correlation (stable)
+      fixed <- FALSE
+      if (requireNamespace("Matrix", quietly = TRUE)) {
+        R_try <- try(Matrix::nearPD(R, corr = TRUE, keepDiag = TRUE)$x, silent = TRUE)
+        if (!inherits(R_try, "try-error")) {
+          R <- as.matrix(R_try)
+          fixed <- TRUE
+          cat("Repaired with Matrix::nearPD\n")
+        }
+      }
+      # 2) fallback: eigenvalue flooring + renormalize to correlation
+      if (!fixed) {
+        ee <- eigen(R, symmetric = TRUE)
+        d  <- pmax(ee$values, 0)
+        R  <- ee$vectors %*% (d * t(ee$vectors))
+        s  <- sqrt(pmax(diag(R), .Machine$double.eps))
+        R  <- R / outer(s, s)
+        R  <- pmin(pmax(R, -1), 1); diag(R) <- 1
+        cat("Repaired with eigenvalue flooring + renormalization\n")
+      }
+      # re-check
+      ev2 <- eigen(R, symmetric = TRUE, only.values = TRUE)$values
+      cat(sprintf("Min eigen after repair: %.3e\n", ev2[length(ev2)]))
+      if (ev2[length(ev2)] < -r_tol)
+        warning("LD matrix repair did not reach PSD within tolerance; results may be unreliable.")
+    } else {
+      cat("LD passes PSD check\n")
+    }
+  }
+  
+  # ---- fit SuSiE-RSS ----
+  cat("Running SuSiE-RSS...\n")
+  fit <- susieR::susie_rss(
+    z = z,
+    R = R,
+    n = n_eff,
+    L = L,
+    estimate_residual_variance = estimate_residual_variance,
+    estimate_prior_variance    = estimate_prior_variance,
+    check_prior                = TRUE,
+    prior_weights              = prior_weights
+  )
+  
+  # ---- extract 95% CS; request purity from Xcorr (r^2) ----
+  cs <- susieR::susie_get_cs(
+    fit, coverage = 0.95,
+    min_abs_corr = min_cs_corr, dedup = TRUE,
+    Xcorr = R, squared = TRUE, check_symmetric = FALSE
+  )
+  
+  # ---- component/CS log10 Bayes factors (SuSiE stores ln BF in fit$lbf) ----
+  cs_log10bf <- rep(NA_real_, length(cs$cs_index))
+  if (length(cs$cs_index) > 0L) {
+    cs_log10bf <- fit$lbf[cs$cs_index] / log(10)  # natural log -> log10
+  }
+  
+  # Per-SNP column mirroring its CS’s log10BF (NA if CS == -1)
+  CS_LOG10BF <- rep(NA_real_, ncol(R))
+  if (length(cs$cs) > 0L) {
+    for (i in seq_along(cs$cs)) {
+      idx <- cs$cs[[i]]
+      CS_LOG10BF[idx] <- cs_log10bf[i]
+    }
+  }
+  
+  
+  # helpers
+  pip      <- as.numeric(susieR::susie_get_pip(fit))
+  postmean <- as.numeric(susieR::susie_get_posterior_mean(fit))
+  postsd   <- as.numeric(susieR::susie_get_posterior_sd(fit))
+  
+  # map SNPs to CS, CS-specific prob, lead r2
+  cs_of_snp    <- rep(-1L, p)
+  cs_spec_prob <- rep(NA_real_, p)
+  lead_r2      <- rep(NA_real_, p)
+  
+  if (length(cs$cs) > 0L) {
+    cs_min_r2 <- cs$purity$min
+    low_purity <- cs_min_r2 < good_cred_r2
+    for (i in seq_along(cs$cs)) {
+      idx  <- cs$cs[[i]]
+      eff  <- cs$cs_index[i]
+      asub <- fit$alpha[eff, idx]
+      for (k in seq_along(idx)) {
+        j <- idx[k]
+        if (is.na(cs_spec_prob[j]) || asub[k] > cs_spec_prob[j]) {
+          cs_spec_prob[j] <- asub[k]
+          cs_of_snp[j]    <- i
+        }
+      }
+      # representative index (only needed to compute lead r2)
+      top_idx <- if (!low_purity[i]) idx[which.max(pip[idx])] else idx[which.max(abs(z[idx]))]
+      lead_r2[idx] <- R[idx, top_idx]^2
+    }
+  }
+  
+  # ---- build final table (sumstats + SuSiE columns only) ----
+  out <- cbind(
+    ss,
+    BETA_MEAN = postmean,
+    BETA_SD   = postsd,
+    PIP       = pip,
+    CS        = cs_of_snp,                 # -1 => not in any 95% CS
+    cs_specific_prob = cs_spec_prob,
+    CS_LOG10BF = CS_LOG10BF,
+    lead_r2   = lead_r2
+  )
+  alpha <- fit$alpha
+  if (is.matrix(alpha) && nrow(alpha) > 0) {
+    alphax <- as.data.frame(t(alpha))
+    names(alphax) <- paste0("alphax_", seq_len(ncol(alphax)))
+    out <- cbind(out, alphax)
+  }
+  
+  # ---- write to disk ----
+  if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+  out_file <- file.path(out_dir, paste0(basename(ld_file_pref), ".susie.txt"))
+  data.table::fwrite(out, out_file, sep = "\t", quote = FALSE, na = "NA")
+  
+  cat("Results written to:", out_file, "\n")
+  cat("Log written to:", log_file, "\n")
+  cat("=== call_susie finished at", format(Sys.time()), "===\n")
+  invisible(out_file)
+}
