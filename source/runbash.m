@@ -88,10 +88,8 @@ end
 
 % Ensure script is executable
 % This solves “Permission denied” issues on Linux or cloud workstations
-[~, chmodMsg] = system(cmdpref + 'chmod +x "' + opts.dirwsl + bashname + '"');
-if opts.verbose
-    disp("chmod output: " + chmodMsg);
-end
+system(cmdpref + 'chmod +x "' + opts.dirwsl + bashname + '"');
+
 
 if opts.conda
     [fid, msg] = system(cmdpref + '/bin/bash -i "' + opts.dirwsl + bashname + '"');

@@ -23,9 +23,11 @@ arguments
     opts.infoscore (1,1) double {mustBeInRange(opts.infoscore, 1e-6, 1)} = 1.1e-6 % INFO score cut-off: variants < INFO score are removed.
     opts.maf (1,1) double {mustBeInRange(opts.maf, 1e-30, 0.5)} = 0.01
     opts.chunk (1,1) double
+    opts.dtype {mustBeMember(opts.dtype, ["single", "double"])} = "single"
 
     %@18NOV2024
     opts.range (1,1) logical = false % input variants are range of pos1-pos2?
+    opts.getCorr (1,1) logical = true % to calculate Pearson R or just return genotype struct
 end
 
 if isfield(opts, 'matchid')
@@ -61,11 +63,11 @@ end
 
 if ~isfield(opts, 'bgenhome')
     ld = getbulkgeno(variants, string(chr), 'parallel', opts.parallel, ...
-        'datatype', "single", 'verbose', false, 'chunk', chunksz,...
+        'datatype', opts.dtype, 'verbose', false, 'chunk', chunksz,...
         'eid', opts.ldsample, "merge", true, "infoscore", opts.infoscore);
 else
     ld = getbulkgeno(variants, string(chr), 'parallel', opts.parallel, ...
-        'datatype', "single", 'home', opts.bgenhome, 'verbose', false, ...
+        'datatype', opts.dtype, 'home', opts.bgenhome, 'verbose', false, ...
         'chunk', chunksz, 'eid', opts.ldsample, "merge", true, "infoscore", opts.infoscore);
 end
 
@@ -137,9 +139,16 @@ end
 if ~opts.a2freq % this flag should be removed
     ld = rmfield(opts, "a2freq");
 end
-ld.ld = corr(ld.bed);
 
-fi = ["eid", "swap", "bed", "eid"];
+%@28AUG2025: to calculate correlation R
+if opts.getCorr
+    ld.ld = corr(ld.bed);
+    fi = ["eid", "swap", "bed"];
+else
+    fi = "swap";
+end
+
+
 ld = rmfield(ld, fi);
  
 end % END

@@ -58,7 +58,7 @@ arguments
     opts.backup (1,1) logical = true; % save raw annotations, so it can be used for future use (e.g. with different filters). In this case, raw annotations will be saved to a mat file within callVEP directory. 
     
     % dbNSFP options
-    opts.dbnsfpHome {mustBeTextScalar} % dbNSFP parsed annotations directory. Files should be available for each chromosome separately. only used when method is set to "dbnsfp"
+    opts.dbnsfpHome {mustBeTextScalar} = "F:\dbNSFP" % dbNSFP parsed annotations directory. Files should be available for each chromosome separately. only used when method is set to "dbnsfp"
     opts.dbnsfpFile {mustBeTextScalar} = "" % dbNSFP file pattern, this is helpful if there are non dbNSFP files in 'dbnsfpHome' dir. This can be part of the file name for all chromosomes, e.g. "dbNSFP4.2a_variant.chr" matches dbNSFP4.2a_variant.chr1.txt to dbNSFP4.2a_variant.chr22.txt. If left empty (default), only dbNSFP parsed files (txt) are present in the dir.
     opts.parallel (1,1) logical = false % Only used with "dbnsfp". If true uses bfilereader in parallel, otherwise (default) uses readtable (use parallel only if parsed files are big enough).
     opts.readall (1,1) logical = true % by default (true) fetches all columns from the dbNSFP parsed file (useful in gwasrunner). If false, then only filtering columns will be read (useful in saigeWrapper).
@@ -627,8 +627,9 @@ for i = 1:numel(r)
     if ~isempty(clinvar)
         res.ClinVar(i) = unique(clinvar);
     end
+
     if ~isempty(clinsig)
-        res.clin_sig(i) = unique(clinsig);
+        res.clin_sig(i) = join(unique(clinsig, "stable"), "||");
     end
 
     if ~isempty(alphamissense)

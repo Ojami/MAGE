@@ -22,9 +22,21 @@ for k = 1:numel(files)
     file = files(k);
     
     % check if cols exist in header
-    cc = bfilereader(file, summary="firstline");
+    [cc, filedelim] = bfilereader(file, summary="firstline");
     assert(all(ismember(cols, cc)), "Error:some columns cannot be found in the header!")
     assert(all(~ismember(opts.newcol, cc)), "newcol cannot be an already existing column!")
+
+    % build robust FS for awk from detected delimiter
+    fs = string(filedelim.sep);
+    is_ws = all(ismember(char(fs), char(" \t")));   % only spaces/tabs?
+    if is_ws
+        fs_awk = "[ \t]+";
+    elseif fs == "\t"
+        fs_awk = "\t";
+    else
+        % escape regex metachars so awk -F treats it literally
+        fs_awk = regexprep(fs, "([.^$|?*+\\(){}\[\]-])", "\\$1");
+    end
 
     % construct the awk command 
     [~, idx] = ismember(cols, cc); idx(idx < 1) = [];
@@ -46,22 +58,39 @@ for k = 1:numel(files)
     fileout = "'" + makeWSLpath(fileout);
     
     if gzipped
-        cmd = cmd + "awk 'BEGIN {OFS=""" + opts.delim + """} {if (NR==1) " + ...
+         cmd = cmd + "awk -v FS='" + fs_awk + "' -v OFS='" + ...
+            opts.delim + "' '{if (NR==1) " + ...
             "{print $0, """ + opts.newcol + """} else " + ...
             "{print $0, " + mcmd + "}}' | gzip > " + fileout + ".gz'";
+
+        % cmd = cmd + "awk -F'" + filedelim.sep + "' 'BEGIN {OFS=""" + ...
+        %     opts.delim + """} {if (NR==1) " + ...
+        %     "{print $0, """ + opts.newcol + """} else " + ...
+        %     "{print $0, " + mcmd + "}}' | gzip > " + fileout + ".gz'";
     else
-        cmd = "awk 'BEGIN {OFS=""" + opts.delim + """} {if (NR==1) " + ...
+
+        cmd = "awk -v FS='" + fs_awk + "' -v OFS='" + ...
+            opts.delim + "' '{if (NR==1) " + ...
             "{print $0, """ + opts.newcol + """} else " + ...
             "{print $0, " + mcmd + "}}' " + filein + " > " + fileout + "'";
+        % cmd = "awk -F'" + filedelim.sep + "' 'BEGIN {OFS=""" + ...
+        %     opts.delim + """} {if (NR==1) " + ...
+        %     "{print $0, """ + opts.newcol + """} else " + ...
+        %     "{print $0, " + mcmd + "}}' " + filein + " > " + fileout + "'";
     end
     runbash(cmd, "addIDtoGWASfile", "wait", true);
 
-    % normalize delimiter
-    if ~gzipped
+    % normalize delimiter (only when input was whitespace-delimited)
+    if ~gzipped && is_ws
         cmd = "awk 'BEGIN {OFS=""" + opts.delim + """} " + ...
             "{gsub(/[ \t]+/, """ + opts.delim + """); print}' " + ...
             fileout + "' > " + fileout + "_TMP' && mv " + fileout + ...
             "_TMP' " + fileout + "'";
+
+        % cmd = "awk 'BEGIN {OFS=""" + opts.delim + """} " + ...
+        %     "{gsub(/[ \t]+/, """ + opts.delim + """); print}' " + ...
+        %     fileout + "' > " + fileout + "_TMP' && mv " + fileout + ...
+        %     "_TMP' " + fileout + "'";
 
         % cmd = "sed -i 's/ \+/ \t/g' " + fileout + "'";
         runbash(cmd, "addIDtoGWASfile", "wait", true);

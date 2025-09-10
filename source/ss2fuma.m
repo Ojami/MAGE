@@ -9,6 +9,8 @@ arguments
     opts.output {mustBeTextScalar}
     opts.leadsnps {mustBeA(opts.leadsnps, 'table')} % lead snp file
     opts.map {mustBeA(opts.map, 'table')} % mapping between old and new variable names with two columns: 1-old and 2-new
+    opts.metal (1,1) logical = false % if true deletes some extra METAL specific columns, and writes a light sumstat file
+    opts.threads (1,1) double = 35 % only when metal is true
 end
 
 t1 = tic;
@@ -65,14 +67,19 @@ else
     hdr = createGWASheader(hdr);
 end
 
-if sumstat == output
-    cmd = "sed -i '1s/.*/" + hdr.join(" ") + "/' '" + makeWSLpath(sumstat) + ...
-        "'";
+if opts.metal
+    opts.hdr = hdr;
+    parseMETAL2FUMA(sumstat, output, opts);
 else
-    cmd = "sed '1s/.*/" + hdr.join(" ") + "/' '" + makeWSLpath(sumstat) + ...
-        "'  > '" + makeWSLpath(output) + "'";
+    if sumstat == output
+        cmd = "sed -i '1s/.*/" + hdr.join(" ") + "/' '" + makeWSLpath(sumstat) + ...
+            "'";
+    else
+        cmd = "sed '1s/.*/" + hdr.join(" ") + "/' '" + makeWSLpath(sumstat) + ...
+            "'  > '" + makeWSLpath(output) + "'";
+    end
+    runbash(cmd, tmpname, "wait", true);
 end
-runbash(cmd, tmpname, "wait", true);
 
 % compress it
 gzip(output)
@@ -81,3 +88,28 @@ delete(output)
 fprintf('summary stat file %s is ready (done in %.0f sec)\n', output, toc(t1))
 
 end %END
+
+%% subfunctions ===========================================================
+function parseMETAL2FUMA(sumstat, output, opts)
+
+if isfile(output)
+    return
+end
+
+if isempty(gcp("nocreate"))
+    parpool("Processes", opts.threads);
+end
+
+ds = tabularTextDatastore(sumstat, TextType="string", VariableNamingRule="preserve");
+delim = ds.Delimiter;
+
+ds = tall(ds);
+keep_hdr = setdiff(opts.hdr, ["FreqSE", "MinFreq", "MaxFreq", "Direction", ...
+        "HetISq", "HetChiSq", "HetDf", "HetPVal"], "stable");
+ds.Properties.VariableNames = opts.hdr;
+
+ds = ds(:, keep_hdr);
+fastWriteTable(ds, output=output, delimiter=delim)
+dos2unix( output, verbose=true);
+
+end % END

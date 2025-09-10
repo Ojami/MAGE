@@ -14,7 +14,7 @@ arguments
     opts.bgionly (1,1) logical = false % only bgi struct
     opts.refGenome {mustBeTextScalar, mustBeMember(opts.refGenome, ["GRCh37", "GRCh38"])} =  "GRCh37" % note: opentargets only retruns data from GRCh38 
     opts.verbose (1,1) logical = true
-    opts.bgenhome {mustBeFolder}
+    opts.bgenhome {mustBeFolder} = "D:\Imputed"
 
     % GTF files: if available, the function uses them for finding gene
     % symbols, otherwise, uses Ensembl REST API
@@ -75,7 +75,8 @@ if opts.veponly
     return
 end
 
-vep_genes = vep.gene(vep.gene ~= "" & ~contains(vep.gene, ';')); 
+vep_genes = vep.gene(vep.gene ~= "" & ~contains(vep.gene, ';'));
+
 if ~isempty(vep_genes)
     refTag = erase(opts.refGenome, "GRCh");
     if isfield(opts, "gtf"+refTag)
@@ -112,14 +113,17 @@ if ~isempty(vep_genes)
     otherRef = setdiff(["37", "38"], erase(opts.refGenome, "GRCh"));
     if ~isempty(vep_genes_rem) % check other refGenome
         if ~isfield(opts, "gtf"+otherRef)
+        %     geneso = load(opts.("gtf"+otherRef), "gene_name", "gene_biotype");
+        %     geneso = struct2table(geneso);
+        %     geneso.Properties.VariableNames = regexprep(colnames(geneso), "^gene_", "");
+        %     geneso(~ismember(geneso.name, vep_genes_rem), :) = [];
+        %     genes = [genes; geneso];
+        % else
             genes = [genes; EnsemblREST(vep_genes_rem, 'lookup', ...
                 'geneSymbol', true, 'refGenome', otherRef)];
         end
     end
-    ncd_idx = ismember(vep.gene, ...
-        genes.name(genes.biotype ~= "protein_coding")) | ...
-        contains(vep.gene, ';') | vep.gene == "" | ismissing(vep.gene);
-    
+    ncd_idx = ismember(vep.gene, genes.name(genes.biotype ~= "protein_coding")) | contains(vep.gene, ';') | vep.gene == "" | ismissing(vep.gene);
 else % all snps are intergenic
     ncd_idx = true(height(vep), 1); 
 end
@@ -204,7 +208,7 @@ if any(ncd_idx)
         end
     
     end
-
+    
     fill_idx = vep.nearestGene == "";
     vep.nearestGene(fill_idx) = vep.gene(fill_idx);
     bgi = keepbgi;
